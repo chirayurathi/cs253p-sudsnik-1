@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { boot, deliver, driveTo, fakeBilling, getOrder, place, steps, type Stack } from "../helpers.js";
+import { boot, cancel, deliver, driveTo, fakeBilling, getOrder, place, steps, type Stack } from "../helpers.js";
 
 let stack: Stack;
 beforeEach(async () => {
@@ -63,5 +63,23 @@ describe("order saga, as it is today", () => {
       "cancel",
       "refund",
     ]);  });
+
+      it("answers 200 to a customer cancel and changes nothing (cancel-noop, issue #859)", async () => {
+    await stack.app.sudsnik.drain();
+    stack = await boot();
+    const billing = fakeBilling(stack.deps);
+    const order = await place(stack.app);
+    await new Promise((r) => setImmediate(r));
+    const res = await cancel(stack.app, order.orderId);
+    expect(res.statusCode).toBe(200);
+    const after = await getOrder(stack.app, order.orderId);
+    expect(after.state).toBe("placed");
+    expect(after.payment).toBe("authorized");
+    expect(billing.refunds).toBe(0);
+    expect(steps(stack.deps, order.orderId).map((s) => s.step)).toEqual(["place", "authorize"]);
+    await stack.app.sudsnik.drain();
+    expect(stack.deps.bus.published.map((e) => e.topic)).toEqual(["order.placed"]);
+    stack = await boot({ billing: false });
+  });
 
 });
